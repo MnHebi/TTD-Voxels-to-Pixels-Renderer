@@ -73,7 +73,8 @@ jobs:
         id: version
         shell: python
         run: |
-          import os
+          import os, sys
+          sys.path.insert(0, os.getcwd())
           from voxelterrain import __version__
           with open(os.environ['GITHUB_OUTPUT'],'a') as output: output.write('version='+__version__+'\n')
       - name: Run source tests with the native decoder
