@@ -1,0 +1,13 @@
+.work/
+.venv/
+__pycache__/
+*.pyc
+local.json
+exports/
+test-results/
+node_modules/
+.pytest_cache/
+.DS_Store
+Thumbs.db
+.env
+.env.*

@@ -1,0 +1,274 @@
+# SPDX-License-Identifier: GPL-2.0-only
+import io
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+import zipfile
+
+import numpy as np
+from PIL import Image
+
+from voxelterrain.export import compiler_available, export_bundle
+from voxelterrain.grf import codec_path, import_grf, parse_nfo, export_references
+from voxelterrain.model import default_project, preset, validate
+from voxelterrain.palette import PALETTES, RESERVED, quantize, indexed, display_masked_rgba
+from voxelterrain.render import Reference, render
+from voxelterrain.server import resolve_reference
+
+
+class GeometryTests(unittest.TestCase):
+    def test_flat_geometry_and_pixel_phase(self):
+        expected={1:((64,31),(-31,0)),2:((128,63),(-62,-1)),4:((256,127),(-124,-2))}
+        for zoom,(size,offset) in expected.items():
+            r=render(default_project(),zoom=zoom)
+            self.assertEqual((r.rgb.size,r.offset),(size,offset))
+            self.assertEqual(np.count_nonzero(np.asarray(r.rgb)[:,:,3]),1024*zoom*zoom)
+        mask=np.asarray(render(default_project()).rgb)[:,:,3]>0
+        self.assertEqual(mask.sum(axis=1).tolist(),list(range(4,65,4))+list(range(60,0,-4)))
+
+    def test_three_by_three_has_no_holes_or_overlaps_at_every_zoom(self):
+        for zoom in (1,2,4):
+            r=render(default_project(),zoom=zoom)
+            coverage=np.zeros((240*zoom,480*zoom),dtype=np.uint8)
+            mask=(np.asarray(r.rgb)[:,:,3]>0).astype(np.uint8)
+            anchor=(200*zoom,20*zoom)
+            for x in range(3):
+                for y in range(3):
+                    left=anchor[0]+2*(y-x)*16*zoom+r.offset[0]
+                    top=anchor[1]+(x+y)*16*zoom+r.offset[1]
+                    coverage[top:top+mask.shape[0],left:left+mask.shape[1]]+=mask
+            self.assertLessEqual(coverage.max(),1)
+            yy,xx=np.mgrid[:coverage.shape[0],:coverage.shape[1]]
+            sx=(xx-anchor[0]+.5)/zoom-1
+            sy=(yy-anchor[1]+1+zoom//2)/zoom
+            wx=(sy-sx/2)/2;wy=(sy+sx/2)/2
+            expected=(wx>=0)&(wx<48)&(wy>=0)&(wy<48)
+            np.testing.assert_array_equal(coverage>0,expected)
+
+    def test_crop_preserves_ground_origin_when_height_changes(self):
+        p=default_project();p["profile"]="object"
+        a=render(p)
+        p["heights"]=[8]*256
+        b=render(p)
+        self.assertEqual(a.offset[0],b.offset[0])
+        self.assertEqual(b.offset[1],a.offset[1]-8)
+        self.assertEqual(b.bounds["zextent"],8)
+        self.assertEqual((b.bounds["xextent"],b.bounds["yextent"]),(16,16))
+
+    def test_ground_silhouette_clips_tall_geometry(self):
+        p=preset(default_project(),"terrace")
+        p["heights"]=[v*4 for v in p["heights"]]
+        r=render(p)
+        self.assertGreater(r.clipped,0)
+        self.assertGreaterEqual(r.offset[1],0)
+        self.assertLessEqual(r.rgb.height,31)
+
+    def test_picking_map_contains_actual_visible_columns(self):
+        p=preset(default_project(),"terrace");p["profile"]="object"
+        r=render(p,zoom=4)
+        alpha=np.asarray(r.rgb)[:,:,3]
+        self.assertTrue(np.all(r.cell_map[alpha>0]>=0))
+        self.assertTrue(np.all(r.cell_map[alpha==0]==-1))
+        self.assertLess(r.cell_map.max(),256)
+
+    def test_reference_flat_silhouette_uses_correct_phase_at_extra_zoom(self):
+        src=render(default_project())
+        ref=Reference(src.rgb,None,*src.offset)
+        for zoom in (1,2,4):
+            r=render(default_project(),ref,zoom)
+            expected=render(default_project(),zoom=zoom)
+            self.assertEqual(r.offset,expected.offset)
+            np.testing.assert_array_equal(np.asarray(r.rgb)[:,:,3],np.asarray(expected.rgb)[:,:,3])
+            self.assertEqual(r.missing_ground,0)
+
+    def test_mound_has_complete_flat_ground_footprint(self):
+        for zoom in (1,2,4):
+            r=render(preset(default_project(),"mound"),zoom=zoom)
+            self.assertEqual(r.missing_ground,0)
+
+    def test_lighting_distinguishes_faces(self):
+        p=default_project();p["profile"]="object";p["heights"]=[8]*256
+        p["light"]["shadows"]=0;p["light"]["ao"]=0
+        r=render(p,zoom=4)
+        colours=np.unique(np.asarray(r.rgb).reshape(-1,4),axis=0)
+        self.assertGreaterEqual(len(colours),4)  # top, both visible sides, transparent
+
+
+class ColourTests(unittest.TestCase):
+    def test_both_palettes_are_complete(self):
+        for p in PALETTES.values():
+            self.assertEqual(len(p),768)
+
+    def test_quantisation_never_assigns_special_or_transparent_indices(self):
+        rng=np.random.default_rng(123)
+        rgba=rng.integers(0,256,(48,48,4),dtype=np.uint8);rgba[:,:,3]=255
+        for palette in ("dos","windows"):
+            for dither in (False,True):
+                result=quantize(Image.fromarray(rgba),palette,dither)
+                self.assertFalse(set(np.unique(result))&RESERVED[palette])
+                self.assertEqual(result.mode,"P")
+
+    def test_alpha_zero_and_explicit_company_indices_are_preserved(self):
+        rgba=np.full((2,2,4),255,dtype=np.uint8);rgba[0,0,3]=0
+        semantic=np.array([[205,198],[0,205]],dtype=np.uint8)
+        result=quantize(Image.fromarray(rgba),semantic=semantic)
+        self.assertEqual(np.asarray(result).tolist(),[[0,198],[15,205]])
+        self.assertEqual(result.info["transparency"],0)
+
+    def test_projection_reproduces_source_pixels_without_double_lighting(self):
+        p=default_project();p["light"].update(ambient=1,strength=0,shadows=0,ao=0)
+        p["colours"]=[f'#{(i*7)%256:02x}{(i*13)%256:02x}{(i*19)%256:02x}' for i in range(256)]
+        src=render(p)
+        ref=Reference(src.rgb,None,*src.offset)
+        p["texture"]="project";p["texture_light"]=0
+        p["colours"]=["#ff00ff"]*256
+        p["light"].update(ambient=.1,strength=.1)
+        out=render(p,ref)
+        np.testing.assert_array_equal(np.asarray(out.rgb),np.asarray(src.rgb))
+        self.assertEqual(out.uncovered,0)
+
+    def test_surface_texture_covers_elevated_surfaces_beyond_projected_image(self):
+        src=render(default_project())
+        ref=Reference(src.rgb,None,*src.offset)
+        p=preset(default_project(),"terrace");p["profile"]="object";p["texture"]="surface"
+        p["heights"]=[h*3 for h in p["heights"]]
+        surface=render(p,ref)
+        p["texture"]="project";projection=render(p,ref)
+        self.assertLess(surface.uncovered,projection.uncovered)
+
+    def test_company_colour_generates_rgb_mask_and_indexed_output(self):
+        p=default_project();p["tags"]=[202]*256
+        r=render(p)
+        visible=np.asarray(r.rgb)[:,:,3]>0
+        self.assertTrue(np.all(np.asarray(r.mask)[visible]==202))
+        self.assertTrue(np.all(np.asarray(r.palette_image)[visible]==202))
+        rgb=np.asarray(r.rgb)[visible,:3]
+        self.assertTrue(np.all(rgb[:,0]==rgb[:,1]))
+
+    def test_neutral_mask_brightness_is_128_independent_of_palette_shade(self):
+        p=default_project();p["tags"]=[202]*256
+        p["light"].update(ambient=1,strength=0,shadows=0,ao=0)
+        r=render(p)
+        visible=np.asarray(r.rgb)[:,:,3]>0
+        self.assertTrue(np.all(np.asarray(r.rgb)[visible,:3]==128))
+        display=np.asarray(display_masked_rgba(r.rgb,r.mask))
+        expected=np.array(PALETTES["dos"]).reshape(256,3)[202]
+        self.assertTrue(np.all(display[visible,:3]==expected))
+
+    def test_32bpp_reference_preserves_ordinary_mask_indices_and_brightness(self):
+        p=default_project();src=render(p)
+        rgba=np.array(src.rgb);visible=rgba[:,:,3]>0
+        rgba[visible,:3]=96
+        tags=np.where(visible,80,0).astype(np.uint8)
+        ref=Reference(Image.fromarray(rgba),indexed(tags),*src.offset,indexed=False)
+        p["texture"]="project";p["texture_light"]=0
+        r=render(p,ref)
+        self.assertTrue(np.all(np.asarray(r.mask)[visible]==80))
+        self.assertTrue(np.all(np.asarray(r.rgb)[visible,:3]==96))
+
+
+class InputTests(unittest.TestCase):
+    def test_rejects_nonfinite_and_wrong_sized_models(self):
+        p=default_project();p["heights"][1]=float("nan")
+        with self.assertRaises(ValueError):validate(p)
+        p=default_project();p["colours"].pop()
+        with self.assertRaises(ValueError):validate(p)
+
+    def test_nfo_spaces_alternatives_and_mask(self):
+        text='''0 C:/a path/sheet.png 8bpp 2 3 64 31 -31 0 normal nocrop
+  | C:/a path/sheet.32.png 32bpp 4 5 128 63 -62 -1 zi2 chunked
+  | C:/a path/sheet.png mask 8 9
+1 * 4 00 00 00 00'''
+        s=parse_nfo(text,Path("temp"))
+        self.assertEqual(len(s),2)
+        self.assertEqual(s[1].number,0)
+        self.assertEqual(s[1].mask_x,8)
+        self.assertEqual(s[1].mask_y,9)
+        self.assertEqual(s[1].image,str(Path("temp/sheet.32.png")))
+
+    def test_mask_without_rgb_is_rejected(self):
+        with self.assertRaises(ValueError):parse_nfo('| foo.png mask 0 0',Path("temp"))
+
+    def test_texture_requires_a_reference(self):
+        p=default_project();p["texture"]="project"
+        with self.assertRaises(ValueError):render(p)
+
+
+class ExportTests(unittest.TestCase):
+    def test_individual_files_metadata_and_rgb_fallback(self):
+        p=default_project();p["colour_mode"]="32bpp"
+        raw,m,d=export_bundle([p],resolve_reference)
+        self.assertEqual(len(m["sprites"]),4)
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            for record in m["sprites"]:
+                with Image.open(z.open(record["file"])) as image:
+                    self.assertEqual(image.size,(record["width"],record["height"]))
+                    self.assertEqual(image.mode,"P" if record["mode"]=="8bpp" else "RGBA")
+                if record["mode"]=="8bpp":self.assertTrue(record["fallback"])
+            self.assertIn("workshop.nml",z.namelist())
+        self.assertEqual(m["runtime_status"],"NOT_TESTED_IN_GAME")
+
+    def test_duplicate_ground_targets_are_rejected(self):
+        with self.assertRaises(ValueError):export_bundle([default_project(),default_project()],resolve_reference)
+
+    def test_newgrf_local_id_is_not_silently_used_as_a_base_id(self):
+        p=default_project();p["replacement_id"]=5000
+        with self.assertRaises(ValueError):export_bundle([p],resolve_reference)
+
+    def test_incomplete_ground_footprint_is_rejected(self):
+        p=default_project();p["heights"]=[8]*256
+        with self.assertRaisesRegex(ValueError,"ground-footprint"):
+            export_bundle([p],resolve_reference)
+
+    @unittest.skipUnless(compiler_available(),"NML compiler not installed")
+    def test_modern_both_modes_compile_and_decode_with_exact_bounds_and_pixels(self):
+        try:codec_path()
+        except ValueError:self.skipTest("GRFCodec not installed")
+        for profile,palette,mode in (("ground","dos","both"),("object","dos","both"),
+                                     ("ground","windows","32bpp"),("object","windows","8bpp")):
+            p=preset(default_project(),"mound");p["profile"]=profile;p["tags"][8*16+8]=202
+            p["palette"]=palette;p["colour_mode"]=mode
+            _,manifest,d=export_bundle([p],resolve_reference,True)
+            library=import_grf((d/"workshop.grf").read_bytes(),"roundtrip.grf",palette)
+            try:
+                self.assertEqual(len(library.sprites),len(manifest["sprites"]))
+                reference_zip=export_references(library)
+                with zipfile.ZipFile(io.BytesIO(reference_zip)) as archive:
+                    references=json.loads(archive.read("manifest.json"))
+                    self.assertEqual(len(references["sprites"]),len(library.sprites))
+                    self.assertTrue(all(name.startswith("sprites/") for name in archive.namelist() if name.endswith(".png")))
+                    for record in references["sprites"]:
+                        with Image.open(archive.open(record["file"])) as image:
+                            self.assertEqual(image.mode,"P" if record["depth"]=="8bpp" else "RGBA")
+                            self.assertEqual(image.size,(record["width"],record["height"]))
+                for record in manifest["sprites"]:
+                    match=[s for s in library.sprites if s.depth==record["mode"] and s.zoom=={1:"normal",2:"zi2",4:"zi4"}[record["zoom"]]]
+                    self.assertEqual(len(match),1)
+                    s=match[0];image,mask=library.crop(s.key)
+                    self.assertEqual((s.width,s.height,s.xoffset,s.yoffset),(record["width"],record["height"],record["xoffset"],record["yoffset"]))
+                    source=Image.open(d/record["file"])
+                    if source.mode=="P":
+                        # Compare palette indices, independently of decoder display colours.
+                        np.testing.assert_array_equal(np.asarray(library.sheet(s.image).crop((s.x,s.y,s.x+s.width,s.y+s.height))),np.asarray(source))
+                    else:
+                        np.testing.assert_array_equal(np.asarray(image),np.asarray(source))
+                    if record.get("mask"):
+                        self.assertIsNotNone(mask)
+                        np.testing.assert_array_equal(np.asarray(mask),np.asarray(Image.open(d/record["mask"])))
+            finally:library.sheet.cache_clear()
+
+    def test_legacy_v1_8bpp_roundtrip(self):
+        try:codec_path()
+        except ValueError:self.skipTest("GRFCodec not installed")
+        p=default_project();p["colour_mode"]="8bpp"
+        _,m,d=export_bundle([p],resolve_reference,True,True)
+        self.assertEqual(len(m["sprites"]),1)
+        self.assertNotEqual((d/"workshop.grf").read_bytes()[:2],b"\0\0")
+        lib=import_grf((d/"workshop.grf").read_bytes(),"legacy.grf")
+        self.assertEqual(len(lib.sprites),1)
+        self.assertEqual((lib.sprites[0].xoffset,lib.sprites[0].yoffset),(-31,0))
+
+
+if __name__=="__main__":unittest.main()
