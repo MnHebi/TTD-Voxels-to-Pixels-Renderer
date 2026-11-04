@@ -15,9 +15,10 @@ import uuid
 import zipfile
 
 from PIL import Image
+from .runtime import RESOURCE_ROOT, DATA_ROOT, CONFIG_PATH, run_tool
 
-ROOT = Path(__file__).resolve().parent.parent
-WORK = ROOT / ".work"
+ROOT = RESOURCE_ROOT
+WORK = DATA_ROOT
 MAX_UPLOAD = 128 * 1024 * 1024
 MAX_SPRITE_PIXELS = 16_777_216
 # GRFCodec does not quote paths containing spaces. Anchor the parser on depth.
@@ -27,7 +28,7 @@ MASK = re.compile(r'^\s*\|\s+(.+?)\s+mask\s+(\d+)\s+(\d+)\s*$')
 
 def codec_path():
     configured = os.environ.get("GRFCODEC")
-    config = ROOT / "local.json"
+    config = CONFIG_PATH
     if not configured and config.exists():
         configured = json.loads(config.read_text()).get("grfcodec")
     candidates = [configured, shutil.which("grfcodec"), ROOT/"tools/grfcodec.exe", ROOT/"tools/grfcodec"]
@@ -132,7 +133,7 @@ def import_grf(payload, name, palette="dos"):
     source.write_bytes(payload)
     output = directory / "sprites"
     try:
-        result = subprocess.run([codec, "-s", "-d", "-o", "png", "-p", "1" if palette == "dos" else "2",
+        result = run_tool([codec, "-s", "-d", "-o", "png", "-p", "1" if palette == "dos" else "2",
                                  str(source), str(output)], cwd=directory, capture_output=True, timeout=120,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode:
@@ -146,8 +147,8 @@ def import_grf(payload, name, palette="dos"):
     except Exception:
         # This exact generated directory is owned by this import, never an input path.
         target=directory.resolve()
-        owned_root=(ROOT/".work/imports").resolve()
-        if target.parent==owned_root and target.is_relative_to(ROOT.resolve()):
+        owned_root=(WORK/"imports").resolve()
+        if target.parent==owned_root and target.is_relative_to(WORK.resolve()):
             shutil.rmtree(target)
         raise
 

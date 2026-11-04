@@ -1,0 +1,117 @@
+name: Standalone apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'app.py'
+      - 'voxelterrain/**'
+      - 'web/**'
+      - 'assets/**'
+      - 'tests/**'
+      - 'tools/build_app.py'
+      - 'tools/build_grfcodec.py'
+      - 'tools/smoke_app.py'
+      - 'requirements-build.txt'
+      - '.github/workflows/build-apps.yml'
+  pull_request:
+    paths:
+      - 'app.py'
+      - 'voxelterrain/**'
+      - 'web/**'
+      - 'tools/**'
+      - 'requirements-build.txt'
+      - '.github/workflows/build-apps.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            label: windows-x64
+            architecture: x64
+            extension: zip
+            executable: TTDVoxelsToPixels.exe
+          - os: ubuntu-22.04
+            label: linux-x64
+            architecture: x64
+            extension: tar.gz
+            executable: TTDVoxelsToPixels
+          - os: macos-15
+            label: macos-arm64
+            architecture: arm64
+            extension: tar.gz
+            executable: TTDVoxelsToPixels
+          - os: macos-15-intel
+            label: macos-x64
+            architecture: x64
+            extension: tar.gz
+            executable: TTDVoxelsToPixels
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.architecture }}
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Build app and native GRFCodec
+        run: python tools/build_app.py
+      - name: Read application version
+        id: version
+        shell: python
+        run: |
+          import os
+          from voxelterrain import __version__
+          with open(os.environ['GITHUB_OUTPUT'],'a') as output: output.write('version='+__version__+'\n')
+      - name: Run source tests with the native decoder
+        shell: python
+        run: |
+          import json, os, subprocess, sys
+          from pathlib import Path
+          env=os.environ.copy()
+          env['GRFCODEC']=json.loads(Path('.work/native-codec/manifest.json').read_text())['binary']
+          subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],env=env,check=True)
+      - name: Test the extracted app without Python on its PATH
+        run: python tools/smoke_app.py "dist/TTDVoxelsToPixels-${{ steps.version.outputs.version }}-${{ matrix.label }}.${{ matrix.extension }}" --report "dist/${{ matrix.label }}-smoke.json"
+      - name: Keep packages, checksums and smoke evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish prerelease packages
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: app-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish versioned prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* --verify-tag --prerelease --title "TTD Voxels to Pixels Renderer $RELEASE_TAG" --notes-file docs/RELEASE_NOTES.md

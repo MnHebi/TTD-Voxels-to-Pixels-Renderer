@@ -1,6 +1,15 @@
 # Validation record — 4 November 2026
 
-Status: **0.4 working; READY_FOR_USER_ART_REVIEW**. In-game visual acceptance, town growth and cargo behaviour remain pending.
+Status: **0.5 Windows package verified by automated checks; READY_FOR_USER_ART_REVIEW**. In-game visual acceptance, town growth and cargo behaviour remain pending. macOS desktop validation requires community testers.
+
+## Standalone packages (0.5)
+
+- **69 Python tests passed**, including four runtime checks covering OS data locations, external-tool environments, command-line validation and the frozen compiler worker entry point.
+- The extracted Windows x64 ZIP passed `tools/smoke_app.py` from a separate working directory with Python and GRFCodec removed from the application's PATH. Checks covered bundled static assets/palettes, rendering, NML compilation, GRFCodec import, legacy encoding, JPEG import, perceptual palette conversion and a separate writable data directory. Evidence is emitted as `windows-x64-smoke.json`; the smoke fixture's compiled GRF SHA-256 is `4c3e8575a0dbe4b8cc58029f4c06f0831227755d7760d21d45df1c40ca5c143f`.
+- The existing reference-picture, dropper and building browser regressions passed against the frozen Windows backend in headless Brave, including pane zoom/pan/persistence, project save/open and compiled building export. **Zero JavaScript exceptions.**
+- The native-build workflow runs source tests and extracted-package smoke checks on Windows, Linux and both Mac architectures. Per-run Actions results and emitted JSON reports establish whether those exact packages passed; merely adding a matrix entry does not establish a successful build.
+
+No local Mac hardware is available. macOS packages are experimental, unsigned and not notarized. Hosted build/HTTP checks do not verify Finder launch, browser opening, OS approval or day-to-day desktop behaviour. Linux desktop integration also needs audience feedback. These package checks add no new gameplay or artistic acceptance evidence.
 
 ## Reference-pane zoom controls (0.4 UI update)
 

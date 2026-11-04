@@ -5,8 +5,9 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from .runtime import RESOURCE_ROOT
 
-PALETTES = json.loads((Path(__file__).resolve().parent.parent / "assets/palettes.json").read_text())
+PALETTES = json.loads((RESOURCE_ROOT / "assets/palettes.json").read_text())
 # DOS: company blue 198..205, unused pink 215..226, animation 227..254.
 # Windows reserves 1..9, 246..255; company blue 198..205 and animation 217..244.
 RESERVED = {"dos": {0, *range(198, 206), *range(215, 256)},

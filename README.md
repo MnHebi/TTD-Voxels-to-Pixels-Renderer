@@ -19,6 +19,14 @@ The application interface is currently labelled **Voxel Terrain Workshop**. It r
 | Lighting and textures | Adjustable sun, ambient light, shadows and ambient occlusion; optional projection of a GRF reference onto the model. |
 | Exports | Separate sprite PNGs, indexed masks where needed, metadata, editable projects and NML/NFO; optional compiled test GRFs. |
 
+## Standalone apps
+
+Native app packages bundle Python, the rendering libraries, NML and GRFCodec while keeping the browser interface. Download an archive from [Releases](https://github.com/MnHebi/TTD-Voxels-to-Pixels-Renderer/releases), extract the **whole folder**, and run the included launcher or executable. No separate Python installation is needed for those packages.
+
+Windows x64 and Linux x64 packages are accompanied by automated smoke reports. Apple Silicon and Intel macOS builds are **experimental, unsigned and not notarized**. We have no local Mac hardware, so hands-on Mac validation is left to the community. A hosted build passing is not a claim of full desktop compatibility.
+
+See [app-package instructions](docs/APP_PACKAGES.md) for OS-specific launchers, data locations, build commands and testing scope. The following setup instructions are for running the **source version**.
+
 ## Requirements
 
 A browser alone is not sufficient: the local Python process must remain running while you use the editor.
@@ -31,7 +39,7 @@ A browser alone is not sufficient: the local Python process must remain running 
 | [GRFCodec](https://www.openttd.org/downloads/grfcodec-releases/latest) | Separate, optional executable for importing GRFs and compiling legacy ground replacements. |
 | Current browser | Canvas, Pointer Events and IndexedDB support. |
 
-The current validation was performed on **Windows**. The Python/browser architecture is intended to remain portable; Linux and macOS installation commands are provided below, but those platforms have not yet been fully validated. No standalone executable package is currently included.
+The current validation was performed on **Windows**. The Python/browser architecture is intended to remain portable; Linux and macOS installation commands are provided below, but those platforms have not yet been fully validated. Native packages are built by the Standalone apps workflow; macOS packages are experimental and need community validation. See [app-package instructions](docs/APP_PACKAGES.md).
 
 ## Install and start
 
@@ -167,7 +175,7 @@ Run the Python checks from the repository root:
 
 Use `.venv/bin/python` on Linux/macOS. Compiler/decoder integration tests explicitly skip if the relevant optional tools are unavailable. Optional Playwright browser checks and their environment variables are described in the [detailed guide](docs/USER_GUIDE.md#validation).
 
-The recorded validation includes **65 passing Python tests**, browser workflows, exact PNG-to-compiled-GRF round trips, and isolated OpenTTD loading/saving checks. See [VALIDATION.md](VALIDATION.md) for the evidence and its scope. Successful compilation/loading does not establish in-game art approval, town-growth/cargo behaviour or visual sorting; those still need interactive review.
+The recorded validation includes **69 passing Python tests**, Windows standalone-package checks, browser workflows, exact PNG-to-compiled-GRF round trips, and isolated OpenTTD loading/saving checks. See [VALIDATION.md](VALIDATION.md) for the evidence and its scope. Successful compilation/loading does not establish in-game art approval, town-growth/cargo behaviour or visual sorting; those still need interactive review.
 
 Terrain uses solid columns with shaped caps. Buildings use overlapping solid parts, including raised floors and overhangs within the lot. Arbitrary mesh/VOX import, a freely rotating camera and automatic reconstruction from 2D artwork are not implemented. Legacy export is restricted to normal-zoom 8bpp ground replacements for the TTD/TTDPatch pipeline; unpatched original TTD does not load NewGRFs.
 

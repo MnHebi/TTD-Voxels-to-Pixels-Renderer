@@ -20,6 +20,7 @@ from .grf import ROOT, WORK, codec_path
 from .model import validate, replacement_target
 from . import __version__
 from .render import render
+from .runtime import FROZEN, run_tool
 
 ZOOMS = {1:("normal","ZOOM_LEVEL_NORMAL"),2:("zi2","ZOOM_LEVEL_IN_2X"),4:("zi4","ZOOM_LEVEL_IN_4X")}
 
@@ -34,7 +35,8 @@ def compile_nml(directory, stem="workshop"):
     env = os.environ.copy()
     bundled = WORK/"compiler"
     env["PYTHONPATH"] = os.pathsep.join([str(bundled),env.get("PYTHONPATH","")])
-    result = subprocess.run([sys.executable,"-m","nml.main","--no-cache","--grf",f"{stem}.grf",
+    command=[sys.executable,"--compile-nml"] if FROZEN else [sys.executable,"-m","nml.main"]
+    result = subprocess.run([*command,"--no-cache","--grf",f"{stem}.grf",
                              "--nfo",f"{stem}.nfo",f"{stem}.nml"],cwd=directory,env=env,
                             capture_output=True,timeout=120,
                             creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
@@ -176,7 +178,7 @@ item(FEAT_OBJECTS, object_{tile_index}) {{
         (directory/"workshop.nfo").write_text("\n".join(lines)+"\n")
         if build:
             codec=codec_path()
-            result=subprocess.run([codec,"-s","-e","-g","1",str(directory/"workshop.grf"),str(directory)],
+            result=run_tool([codec,"-s","-e","-g","1",str(directory/"workshop.grf"),str(directory)],
                                   cwd=directory,capture_output=True,timeout=120,
                                   creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
             if result.returncode:

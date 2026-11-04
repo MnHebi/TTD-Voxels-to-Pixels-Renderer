@@ -1,0 +1,5 @@
+# Release builds use Python 3.12 and these tested versions.
+Pillow==12.3.0
+numpy==2.3.5
+nml==0.9.0
+pyinstaller==6.22.3
