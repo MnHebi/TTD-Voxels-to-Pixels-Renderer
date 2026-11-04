@@ -24,7 +24,10 @@ class RuntimeTests(unittest.TestCase):
 
     def test_external_library_paths_are_restored_without_mutating_parent(self):
         with tempfile.TemporaryDirectory() as folder:
-            bundle=Path(folder)/"bundle";system=Path(folder)/"system"
+            # RESOURCE_ROOT is canonical in production: macOS /var and Windows
+            # short temp paths can otherwise compare against a different spelling.
+            folder=Path(folder).resolve()
+            bundle=folder/"bundle";system=folder/"system"
             with patch.object(runtime,"FROZEN",True),patch.object(runtime,"RESOURCE_ROOT",bundle),patch.dict(os.environ,{
                 "LD_LIBRARY_PATH":str(bundle),"LD_LIBRARY_PATH_ORIG":str(system),
                 "PATH":os.pathsep.join([str(bundle),str(bundle/"tools"),str(system)]),"DYLD_LIBRARY_PATH":str(bundle)}):

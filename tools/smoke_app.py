@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -21,8 +22,11 @@ def smoke(executable, report_path):
     executable=Path(executable).resolve();report_path=Path(report_path).resolve()
     with tempfile.TemporaryDirectory(prefix="ttd-voxels-smoke-") as temp:
         temp=Path(temp);data=temp/"user data";env=os.environ.copy()
-        for key in ("PYTHONPATH","PYTHONHOME","GRFCODEC","TTD_VOXELS_DATA_DIR"):env.pop(key,None)
-        env["PATH"]=os.pathsep.join([str(Path(os.environ.get("SystemRoot","C:/Windows"))/"System32")] if os.name=="nt" else ["/usr/bin","/bin"])
+        for key in ("PYTHONPATH","PYTHONHOME","GRFCODEC","TTD_VOXELS_DATA_DIR",
+                    "LD_LIBRARY_PATH","LD_LIBRARY_PATH_ORIG","DYLD_LIBRARY_PATH","LIBPATH"):env.pop(key,None)
+        empty_path=temp/"empty tool path";empty_path.mkdir()
+        env["PATH"]=str(empty_path)
+        assert not any(shutil.which(name,path=env["PATH"]) for name in ("python","python3","grfcodec"))
         process=subprocess.Popen([str(executable),"--no-browser","--port","0","--data-dir",str(data)],
                                  cwd=temp,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,
                                  creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
