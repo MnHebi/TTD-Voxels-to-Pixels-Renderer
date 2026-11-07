@@ -507,6 +507,12 @@ for(const name of ["dragenter","dragover"])$("drop-zone").addEventListener(name,
 for(const name of ["dragleave","drop"])$("drop-zone").addEventListener(name,e=>{e.preventDefault();$("drop-zone").classList.remove("drag-over");});
 $("drop-zone").addEventListener("drop",e=>{const file=e.dataTransfer.files[0];if(file)importFile(file);});
 $("grf-file").onchange=()=>{const file=$("grf-file").files[0];if(file)importFile(file);$("grf-file").value="";};
+function paletteNote(lib){
+  const names={dos:"DOS",windows:"Windows"},used=names[lib.palette];
+  if(lib.requested==="auto")return lib.declared in names?`${used} palette (declared by the GRF)`:`${used} palette (GRF declares ${lib.declared==="any"?"any palette":"no palette"})`;
+  if(lib.declared in names&&lib.declared!==lib.palette)return `${used} palette as chosen, but the GRF declares ${names[lib.declared]}`;
+  return `${used} palette`;
+}
 async function importFile(file){
   if(!/\.grf$/i.test(file.name))return toast("Choose a .grf file",true);
   if(file.size>128*1024*1024)return toast("The GRF file exceeds 128 MiB",true);
@@ -516,7 +522,7 @@ async function importFile(file){
     libraries.push(lib);activeLibrary=lib.id;page=0;
     selectedReferenceKey=null;$("export-reference").disabled=true;$("export-references").disabled=false;
     const option=document.createElement("option");option.value=lib.id;option.textContent=lib.name;$("library-select").append(option);$("library-select").value=lib.id;
-    await refreshLibrary();toast(`${lib.count.toLocaleString()} sprite variants loaded`);
+    await refreshLibrary();toast(`${lib.count.toLocaleString()} sprite variants loaded · ${paletteNote(lib)}`,lib.requested!=="auto"&&["dos","windows"].includes(lib.declared)&&lib.declared!==lib.palette);
   }catch(error){toast(error.message,true);}finally{busy(false);}
 }
 async function refreshLibrary(){

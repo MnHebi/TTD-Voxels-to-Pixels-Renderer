@@ -90,10 +90,81 @@ def parse_nfo(text, directory):
     return sprites
 
 
+PSEUDO = re.compile(r'^\s*\d+\s+\*\s+(\d+)\s(.*)$')
+TOKEN = re.compile(r'"([^"]*)"|(\S+)')
+PALS_VALUES = {b"D": "dos", b"W": "windows", b"A": "any"}
+
+
+def _pseudo_bytes(tokens, data, length):
+    """Append GRFCodec quoted strings and hex bytes; None for an unsupported escape."""
+    for m in tokens:
+        if m.group(1) is not None:
+            data += m.group(1).encode("latin1")
+        elif re.fullmatch(r"[0-9A-Fa-f]{2}", m.group(2)):
+            data.append(int(m.group(2), 16))
+        else:
+            return None
+        if len(data) >= length:
+            break
+    return data
+
+
+def _info_palette(data):
+    """Walk an Action 14 chunk tree and return the INFO/PALS value, if present."""
+    def walk(pos, path):
+        while pos < len(data):
+            kind = data[pos]; pos += 1
+            if kind == 0:
+                return pos, None
+            ident = bytes(data[pos:pos+4]); pos += 4
+            if len(ident) < 4:
+                raise ValueError
+            if kind == ord("C"):
+                pos, found = walk(pos, path+(ident,))
+                if found:
+                    return pos, found
+            elif kind == ord("B"):
+                size = int.from_bytes(data[pos:pos+2], "little"); pos += 2
+                value = bytes(data[pos:pos+size]); pos += size
+                if path == (b"INFO",) and ident == b"PALS" and len(value) >= 1:
+                    return pos, PALS_VALUES.get(value[:1])
+            elif kind == ord("T"):
+                pos = data.index(0, pos+1)+1
+            else:
+                raise ValueError
+        return pos, None
+    if not data or data[0] != 0x14:
+        return None
+    try:
+        return walk(1, ())[1]
+    except (ValueError, IndexError):
+        return None
+
+
+def declared_palette(text):
+    """Palette declared by a decoded GRF's Action 14 INFO/PALS: dos, windows, any or None."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = PSEUDO.match(line)
+        if not m or not m.group(2).lstrip().startswith("14"):
+            continue
+        length = int(m.group(1))
+        data = bytearray()
+        # Pseudo-sprites may continue on following lines; the declared length delimits them.
+        for part in [m.group(2), *lines[i+1:i+64]]:
+            data = _pseudo_bytes(TOKEN.finditer(part), data, length)
+            if data is None or len(data) >= length:
+                break
+        if data is not None and len(data) == length and (found := _info_palette(data)):
+            return found
+    return None
+
+
 class Library:
-    def __init__(self, name, directory, sprites, palette, digest):
+    def __init__(self, name, directory, sprites, palette, digest, declared=None):
         self.id = uuid.uuid4().hex
         self.name, self.directory, self.sprites, self.palette, self.digest = name, directory, sprites, palette, digest
+        self.declared = declared
         self.lock = threading.RLock()
 
     @lru_cache(maxsize=6)
@@ -121,9 +192,23 @@ class Library:
             return image.convert("RGBA"), mask
 
 
-def import_grf(payload, name, palette="dos"):
-    if palette not in ("dos", "windows"):
-        raise ValueError("Select a DOS or Windows palette")
+def _decode(codec, source, output, palette, directory):
+    if output.exists():
+        shutil.rmtree(output)
+    result = run_tool([codec, "-s", "-d", "-o", "png", "-p", "1" if palette == "dos" else "2",
+                             str(source), str(output)], cwd=directory, capture_output=True, timeout=120,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if result.returncode:
+        message = (result.stderr+result.stdout).decode("utf-8", errors="replace")[-1200:]
+        raise ValueError(f"GRFCodec could not decode this file: {message}")
+    text = (output / "source.nfo").read_text(encoding="latin1")
+    return parse_nfo(text, output), declared_palette(text)
+
+
+def import_grf(payload, name, palette="auto"):
+    """Decode a GRF. "auto" uses the GRF's declared palette, falling back to DOS."""
+    if palette not in ("auto", "dos", "windows"):
+        raise ValueError("Select Auto, DOS or Windows palette")
     if not payload or len(payload) > MAX_UPLOAD:
         raise ValueError("GRF files must be between 1 byte and 128 MiB")
     codec = codec_path()
@@ -133,17 +218,16 @@ def import_grf(payload, name, palette="dos"):
     source.write_bytes(payload)
     output = directory / "sprites"
     try:
-        result = run_tool([codec, "-s", "-d", "-o", "png", "-p", "1" if palette == "dos" else "2",
-                                 str(source), str(output)], cwd=directory, capture_output=True, timeout=120,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if result.returncode:
-            message = (result.stderr+result.stdout).decode("utf-8", errors="replace")[-1200:]
-            raise ValueError(f"GRFCodec could not decode this file: {message}")
-        nfo = output / "source.nfo"
-        sprites = parse_nfo(nfo.read_text(encoding="latin1"), output)
+        used = "dos" if palette == "auto" else palette
+        sprites, declared = _decode(codec, source, output, used, directory)
+        if palette == "auto" and declared == "windows":
+            used = "windows"
+            # Only indexed sprites depend on the decoding palette.
+            if any(s.depth == "8bpp" for s in sprites):
+                sprites, declared = _decode(codec, source, output, used, directory)
         if not sprites:
             raise ValueError("This GRF contains no image sprites")
-        return Library(Path(name.replace("\\", "/")).name, directory, sprites, palette, hashlib.sha256(payload).hexdigest())
+        return Library(Path(name.replace("\\", "/")).name, directory, sprites, used, hashlib.sha256(payload).hexdigest(), declared)
     except Exception:
         # This exact generated directory is owned by this import, never an input path.
         target=directory.resolve()

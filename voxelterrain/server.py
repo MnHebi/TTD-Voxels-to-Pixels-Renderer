@@ -187,9 +187,11 @@ class Handler(BaseHTTPRequestHandler):
                 with self.server.import_lock:
                     if len(self.server.libraries)>=8:
                         raise ValueError("Eight GRFs are already open. Save your project and restart to free import memory.")
-                    lib=import_grf(body,q.get("name",["import.grf"])[0],q.get("palette",["dos"])[0])
+                    requested=q.get("palette",["auto"])[0]
+                    lib=import_grf(body,q.get("name",["import.grf"])[0],requested)
                     self.server.libraries[lib.id]=lib
-                return self.respond({"id":lib.id,"name":lib.name,"count":len(lib.sprites),"palette":lib.palette})
+                return self.respond({"id":lib.id,"name":lib.name,"count":len(lib.sprites),"palette":lib.palette,
+                                     "declared":lib.declared,"requested":requested})
             data=json.loads(body)
             if path=="/api/pictures/convert":
                 with self.server.picture_lock:

@@ -18,8 +18,8 @@
       <div class="import-icon">↥</div><strong>Bring your tiles in</strong><p>Drop a .grf file here, or browse</p><span>TTD · OpenTTD · NewGRF</span>
     </div>
     <input id="grf-file" type="file" accept=".grf" hidden>
-    <div class="inline-field"><label for="import-palette">Source palette</label><select id="import-palette"><option value="dos">TTD DOS</option><option value="windows">TTD Windows</option></select></div>
-    <p class="hint">Choose the palette used by the source GRF.</p>
+    <div class="inline-field"><label for="import-palette">Source palette</label><select id="import-palette"><option value="auto" selected>Auto (from GRF)</option><option value="dos">TTD DOS</option><option value="windows">TTD Windows</option></select></div>
+    <p class="hint">Auto uses the palette the GRF declares, or DOS if it declares none. Choose DOS or Windows to override.</p>
     <div id="codec-notice" class="notice" hidden>GRFCodec is needed for import. See the setup instructions in README.md.</div>
     <div class="library-top"><select id="library-select" aria-label="Open GRF library"><option value="">No GRF loaded</option></select></div>
     <div class="search-box"><span>⌕</span><input id="sprite-search" placeholder="Find sprite number…" aria-label="Find sprite number"></div>

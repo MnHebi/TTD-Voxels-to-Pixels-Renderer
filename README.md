@@ -93,7 +93,7 @@ On Linux/macOS use `.venv/bin/python` and the path to the appropriate GRFCodec e
 1. Select **Placement → Ground tile** for a terrain replacement, or **Raised tile object** for a decorative terrain object.
 2. Choose a grid size and a terrain preset. **TTD terrain shape → Apply** constructs any of the 19 native slope shapes. For custom caps, select a shape, rotation and rise, then paint with the Shape tool.
 3. Sculpt in the height map or isometric preview. Set colour, lighting and output mode. **Tiling** checks how opposite edges join; **Bounds** shows the sprite origin and extents.
-4. Optionally import a GRF, select its source palette and a sprite reference, then choose a texture-mapping mode. Start with **Reference only** if you only need visual guidance.
+4. Optionally import a GRF (its declared DOS/Windows palette is detected automatically; override **Source palette** if needed), select a sprite reference, then choose a texture-mapping mode. Start with **Reference only** if you only need visual guidance.
 5. Set the target sprite family/base ID for a ground replacement. The default grass family starts at **3981**, and native presets compute their own slope offsets. A sprite number from an arbitrary NewGRF is not automatically a base-game replacement ID.
 6. Choose export zooms and click **Export sprites**. Use **Add current** to collect several models, then **Export collection** to export them together.
 
