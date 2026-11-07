@@ -14,7 +14,9 @@ import threading
 import uuid
 import zipfile
 
+import numpy as np
 from PIL import Image
+from .palette import PALETTES
 from .runtime import RESOURCE_ROOT, DATA_ROOT, CONFIG_PATH, run_tool
 
 ROOT = RESOURCE_ROOT
@@ -93,15 +95,23 @@ def parse_nfo(text, directory):
 PSEUDO = re.compile(r'^\s*\d+\s+\*\s+(\d+)\s(.*)$')
 TOKEN = re.compile(r'"([^"]*)"|(\S+)')
 PALS_VALUES = {b"D": "dos", b"W": "windows", b"A": "any"}
+ESCAPE = re.compile(r"\\([bwd])(?:x([0-9A-Fa-f]+)|(\d+))")
+ESCAPE_SIZES = {"b": 1, "w": 2, "d": 4}
 
 
 def _pseudo_bytes(tokens, data, length):
-    """Append GRFCodec quoted strings and hex bytes; None for an unsupported escape."""
+    """Append NFO quoted strings, hex bytes and \\b/\\w/\\d values; None if unsupported."""
     for m in tokens:
         if m.group(1) is not None:
             data += m.group(1).encode("latin1")
         elif re.fullmatch(r"[0-9A-Fa-f]{2}", m.group(2)):
             data.append(int(m.group(2), 16))
+        elif (e := ESCAPE.fullmatch(m.group(2))):
+            size = ESCAPE_SIZES[e.group(1)]
+            value = int(e.group(2), 16) if e.group(2) else int(e.group(3))
+            if value >= 1 << (8*size):
+                return None
+            data += value.to_bytes(size, "little")
         else:
             return None
         if len(data) >= length:
@@ -161,10 +171,10 @@ def declared_palette(text):
 
 
 class Library:
-    def __init__(self, name, directory, sprites, palette, digest, declared=None):
+    def __init__(self, name, directory, sprites, palette, digest, declared=None, inferred=None):
         self.id = uuid.uuid4().hex
         self.name, self.directory, self.sprites, self.palette, self.digest = name, directory, sprites, palette, digest
-        self.declared = declared
+        self.declared, self.inferred = declared, inferred
         self.lock = threading.RLock()
 
     @lru_cache(maxsize=6)
@@ -192,6 +202,46 @@ class Library:
             return image.convert("RGBA"), mask
 
 
+def _placeholders():
+    # Each palette fills the indices it cannot use with magenta (r=b, g=0).
+    out = {}
+    for name, values in PALETTES.items():
+        rgb = np.array(values).reshape(256, 3)
+        out[name] = np.flatnonzero((rgb[:, 1] == 0) & (rgb[:, 0] == rgb[:, 2]) & (rgb[:, 0] >= 200))
+    return out
+
+
+PLACEHOLDERS = _placeholders()
+
+
+def inferred_palette(sprites, minimum=64, ratio=4):
+    """Infer an undeclared GRF's palette from 8bpp pixels on the other palette's magenta placeholders.
+
+    Windows art uses indices that are unused magenta in DOS, and vice versa. Stray
+    pixels occur in real base sets, so require a clear majority and a minimum count.
+    """
+    hits = {name: 0 for name in PLACEHOLDERS}
+    sheets = {}
+    for s in sprites:
+        if s.depth != "8bpp":
+            continue
+        if s.image not in sheets:
+            with Image.open(s.image) as im:
+                sheets[s.image] = np.asarray(im) if im.mode == "P" else None
+        sheet = sheets[s.image]
+        if sheet is None:
+            continue
+        counts = np.bincount(sheet[s.y:s.y+s.height, s.x:s.x+s.width].ravel(), minlength=256)
+        for name, indices in PLACEHOLDERS.items():
+            hits[name] += int(counts[indices].sum())
+    dos, windows = hits["dos"], hits["windows"]
+    if dos >= minimum and dos >= ratio*windows:
+        return "windows"
+    if windows >= minimum and windows >= ratio*dos:
+        return "dos"
+    return None
+
+
 def _decode(codec, source, output, palette, directory):
     if output.exists():
         shutil.rmtree(output)
@@ -206,7 +256,7 @@ def _decode(codec, source, output, palette, directory):
 
 
 def import_grf(payload, name, palette="auto"):
-    """Decode a GRF. "auto" uses the GRF's declared palette, falling back to DOS."""
+    """Decode a GRF. "auto" uses the declared palette, else one inferred from its pixels, else DOS."""
     if palette not in ("auto", "dos", "windows"):
         raise ValueError("Select Auto, DOS or Windows palette")
     if not payload or len(payload) > MAX_UPLOAD:
@@ -220,14 +270,16 @@ def import_grf(payload, name, palette="auto"):
     try:
         used = "dos" if palette == "auto" else palette
         sprites, declared = _decode(codec, source, output, used, directory)
-        if palette == "auto" and declared == "windows":
+        # Palette indices do not depend on the decoding palette, so infer from the first decode.
+        inferred = None if declared in ("dos", "windows") else inferred_palette(sprites)
+        if palette == "auto" and (declared if declared in ("dos", "windows") else inferred) == "windows":
             used = "windows"
             # Only indexed sprites depend on the decoding palette.
             if any(s.depth == "8bpp" for s in sprites):
-                sprites, declared = _decode(codec, source, output, used, directory)
+                sprites, _ = _decode(codec, source, output, used, directory)
         if not sprites:
             raise ValueError("This GRF contains no image sprites")
-        return Library(Path(name.replace("\\", "/")).name, directory, sprites, used, hashlib.sha256(payload).hexdigest(), declared)
+        return Library(Path(name.replace("\\", "/")).name, directory, sprites, used, hashlib.sha256(payload).hexdigest(), declared, inferred)
     except Exception:
         # This exact generated directory is owned by this import, never an input path.
         target=directory.resolve()

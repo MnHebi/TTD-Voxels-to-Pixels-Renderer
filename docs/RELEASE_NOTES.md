@@ -5,6 +5,19 @@ macOS Apple Silicon and macOS Intel applications. The Python runtime, rendering
 libraries, NML compiler and GRFCodec are included. The interface remains in your
 normal browser.
 
+## New in 0.5.1: automatic GRF palette detection
+
+**Source palette** in the reference library now defaults to **Auto**:
+
+- GRFs that declare their palette (Action 14 `INFO/PALS`) are decoded with it.
+- GRFs without a declaration, such as the original `trg*.grf` base sets, are
+  recognised from their 8bpp pixels. Art drawn for one palette uses indices that
+  are unused magenta in the other. This fixes Windows `trg1r.grf` sprites showing
+  magenta windows, roofs and details when decoded as DOS.
+- Without a clear declaration or majority, import still falls back to DOS.
+- Choosing DOS or Windows overrides detection; the import message warns when the
+  choice differs from what the GRF declares or appears to use.
+
 Extract the **complete application folder**, then run its executable or launcher.
 Keep the backend console open while using the editor; Ctrl+C stops it.
 

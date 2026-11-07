@@ -11,7 +11,8 @@ import numpy as np
 from PIL import Image
 
 from voxelterrain.export import compiler_available, export_bundle
-from voxelterrain.grf import codec_path, import_grf, parse_nfo, export_references, declared_palette
+from voxelterrain.grf import codec_path, import_grf, parse_nfo, export_references, declared_palette, PLACEHOLDERS
+from voxelterrain.runtime import run_tool
 from voxelterrain.model import default_project, preset, validate
 from voxelterrain.palette import PALETTES, RESERVED, quantize, indexed, display_masked_rgba
 from voxelterrain.render import Reference, render
@@ -205,6 +206,11 @@ class InputTests(unittest.TestCase):
         self.assertIsNone(declared_palette(header+'    1 * 16\t 14 "CINFOBPALS" 01 00 "X" 00 00'))
         self.assertIsNone(declared_palette(header+'    1 * 3\t 14 00 00'))
         self.assertIsNone(declared_palette(header))
+        # NML-style \w, \b and \d escapes.
+        escaped=header+('    1 * 54 14 "C" "INFO"\n"B" "VRSN" \\w4 \\dx00000001\n"B" "MINV" \\w4 \\dx00000001\n'
+                        '"B" "NPAR" \\w1 00\n"B" "PALS" \\w1 "W"\n"B" "BLTR" \\w1 "8"\n00\n00')
+        self.assertEqual(declared_palette(escaped),"windows")
+        self.assertIsNone(declared_palette(header+'    1 * 16 14 "CINFOBPALS" \\w99999 "W" 00 00'))
 
     def test_mask_without_rgb_is_rejected(self):
         with self.assertRaises(ValueError):parse_nfo('| foo.png mask 0 0',Path("temp"))
@@ -297,6 +303,37 @@ class ExportTests(unittest.TestCase):
             self.assertNotEqual(a,c)
             for library in (lib,forced,exact):library.sheet.cache_clear()
         with self.assertRaises(ValueError):import_grf(payload,"bad.grf","any")
+
+    def test_undeclared_palette_is_inferred_from_placeholder_indices(self):
+        """Base sets such as trg1r.grf have no Action 14; their pixels identify the palette."""
+        try:codec=codec_path()
+        except ValueError:self.skipTest("GRFCodec not installed")
+        self.assertEqual(PLACEHOLDERS["dos"].tolist(),list(range(215,227)))
+        self.assertEqual(PLACEHOLDERS["windows"].tolist(),[*range(1,10),*range(246,255)])
+        # Windows art uses DOS-magenta indices; DOS art uses Windows-magenta ones. One stray pixel is tolerated.
+        cases=(("windows",[*range(215,227)]*8+[1]),("dos",[*range(246,255)]*8+[220]),(None,[100]*64+[220]*3))
+        for expected,used in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                d=Path(tmp);(d/"sprites").mkdir()
+                image=Image.new("P",(16,8),100);image.putpalette(PALETTES["dos"])
+                image.putdata(used+[100]*(128-len(used)))
+                image.save(d/"sprites/a.png",transparency=0)
+                # GRFCodec reads the info version from the second line.
+                (d/"workshop.nfo").write_text("// Undeclared palette fixture\n// (Info version 32)\n"
+                                              "// Format: spritenum imagefile depth xpos ypos xsize ysize xrel yrel zoom flags\n"
+                                              "0 * 4 01 00 00 00\n1 sprites/a.png 8bpp 0 0 16 8 0 0 normal nocrop\n")
+                result=run_tool([codec,"-s","-e","-g","1",str(d/"workshop.grf"),str(d)],cwd=d,capture_output=True,timeout=120)
+                self.assertEqual(result.returncode,0,result.stdout)
+                payload=(d/"workshop.grf").read_bytes()
+            lib=import_grf(payload,"undeclared.grf")
+            try:
+                self.assertEqual((lib.declared,lib.inferred,lib.palette),(None,expected,expected or "dos"))
+                s=lib.sprites[0]
+                self.assertEqual(np.asarray(lib.sheet(s.image))[s.y,s.x:s.x+16].tolist(),used[:16])
+                # An explicit choice is still honoured.
+                forced=import_grf(payload,"forced.grf","dos")
+                self.assertEqual((forced.palette,forced.inferred),("dos",expected))
+            finally:lib.sheet.cache_clear()
 
     def test_legacy_v1_8bpp_roundtrip(self):
         try:codec_path()

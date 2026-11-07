@@ -191,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
                     lib=import_grf(body,q.get("name",["import.grf"])[0],requested)
                     self.server.libraries[lib.id]=lib
                 return self.respond({"id":lib.id,"name":lib.name,"count":len(lib.sprites),"palette":lib.palette,
-                                     "declared":lib.declared,"requested":requested})
+                                     "declared":lib.declared,"inferred":lib.inferred,"requested":requested})
             data=json.loads(body)
             if path=="/api/pictures/convert":
                 with self.server.picture_lock:

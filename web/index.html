@@ -19,7 +19,7 @@
     </div>
     <input id="grf-file" type="file" accept=".grf" hidden>
     <div class="inline-field"><label for="import-palette">Source palette</label><select id="import-palette"><option value="auto" selected>Auto (from GRF)</option><option value="dos">TTD DOS</option><option value="windows">TTD Windows</option></select></div>
-    <p class="hint">Auto uses the palette the GRF declares, or DOS if it declares none. Choose DOS or Windows to override.</p>
+    <p class="hint">Auto uses the palette the GRF declares, else one recognised from its sprite colours, else DOS. Choose DOS or Windows to override.</p>
     <div id="codec-notice" class="notice" hidden>GRFCodec is needed for import. See the setup instructions in README.md.</div>
     <div class="library-top"><select id="library-select" aria-label="Open GRF library"><option value="">No GRF loaded</option></select></div>
     <div class="search-box"><span>⌕</span><input id="sprite-search" placeholder="Find sprite number…" aria-label="Find sprite number"></div>

@@ -2,6 +2,13 @@
 
 Status: **0.5 Windows package verified by automated checks; READY_FOR_USER_ART_REVIEW**. In-game visual acceptance, town growth and cargo behaviour remain pending. macOS desktop validation requires community testers.
 
+## GRF palette detection (0.5.1)
+
+- **72 Python tests passed** locally on Windows, including Action 14 parsing (GRFCodec multi-line output, NML-style escapes, malformed and undeclared cases), declared-palette import and override for DOS and Windows exports, and inference from placeholder indices using GRFs encoded without Action 14.
+- On a user-supplied Windows `trg1r.grf` (MD5 `b04ce593d8c5016e07473a743d7d3358`, no palette declaration), Auto selected Windows. Visible magenta fell from 214,506 pixels in 2,791 sprites (DOS decode) to 19,863 pixels in 522 sprites, all on indices 1–2 in font/GUI sprites, which the Windows palette defines as magenta and which the user confirmed are expected. Sprites 4574–4590 and 4700–4715 were visually compared against user reference renders and matched.
+- Across 113 previous local imports, inference never contradicted a declared palette; an undeclared DOS base set was inferred as DOS.
+- The browser UI message for the new option was not exercised by the Playwright regressions in this run (Node was unavailable locally).
+
 ## Standalone packages (0.5)
 
 - **69 Python tests passed**, including four runtime checks covering OS data locations, external-tool environments, command-line validation and the frozen compiler worker entry point.
